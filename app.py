@@ -52,7 +52,7 @@ def find_and_predict_all(image_array):
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
     _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
-    # Find individual dots
+    # Find all dot contours
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     dots = []
@@ -62,59 +62,63 @@ def find_and_predict_all(image_array):
         if 20 < area < 500:
             cx = x + w // 2
             cy = y + h // 2
-            dots.append((cx, cy))
+            dots.append(cx)
 
     if not dots:
         return "", [], image_array
 
-    # Auto calculate cell size from dot spacing
-    xs = sorted(set(d[0] for d in dots))
-    gaps = [xs[i+1] - xs[i] for i in range(len(xs)-1) if xs[i+1] - xs[i] > 3]
-    CELL_W = int(np.median(gaps) * 2.5) if gaps else 30
-    CELL_H = int(CELL_W * 1.5)
-
-    used = set()
-    cells = []
-    dots_sorted = sorted(dots, key=lambda d: (d[0] // max(CELL_W,1), d[1] // max(CELL_H,1)))
-
-    for i, (cx, cy) in enumerate(dots_sorted):
-        if i in used:
-            continue
-        cell_dots = []
-        for j, (ox, oy) in enumerate(dots_sorted):
-            if j in used:
-                continue
-            if abs(ox - cx) < CELL_W and abs(oy - cy) < CELL_H * 1.5:
-                cell_dots.append(j)
-        for j in cell_dots:
-            used.add(j)
-
-        group_xs = [dots_sorted[j][0] for j in cell_dots]
-        group_ys = [dots_sorted[j][1] for j in cell_dots]
-        x1 = max(0, min(group_xs) - 25)
-        y1 = max(0, min(group_ys) - 25)
-        x2 = min(image_array.shape[1], max(group_xs) + 25)
-        y2 = min(image_array.shape[0], max(group_ys) + 25)
-        cells.append((x1, y1, x2, y2))
-
-    if not cells:
+    # Find gaps between dots to detect cell boundaries
+    dots_x = sorted(set(dots))
+    
+    # Find large gaps — these are spaces between Braille cells
+    gaps = []
+    for i in range(len(dots_x) - 1):
+        gap = dots_x[i+1] - dots_x[i]
+        gaps.append((dots_x[i], dots_x[i+1], gap))
+    
+    if not gaps:
         return "", [], image_array
 
-    cells = sorted(cells, key=lambda c: c[0])
+    # Average small gap = dot spacing within a cell
+    all_gaps = [g[2] for g in gaps]
+    avg_gap = np.median(all_gaps)
+    
+    # A cell boundary is where gap > 1.5x average gap
+    cell_boundaries = [0]
+    for (x1, x2, gap) in gaps:
+        if gap > avg_gap * 1.5:
+            boundary = (x1 + x2) // 2
+            cell_boundaries.append(boundary)
+    cell_boundaries.append(image_array.shape[1])
+
+    if len(cell_boundaries) < 2:
+        return "", [], image_array
 
     result_letters = []
     result_confidences = []
     annotated = image_array.copy()
 
-    for (x1, y1, x2, y2) in cells:
-        cell = image_array[y1:y2, x1:x2]
+    for i in range(len(cell_boundaries) - 1):
+        x_start = cell_boundaries[i]
+        x_end = cell_boundaries[i+1]
+
+        # Skip very narrow strips (noise)
+        if x_end - x_start < 10:
+            continue
+
+        # Crop full height, cell width
+        cell = image_array[:, x_start:x_end]
+
         if cell.size == 0:
             continue
+
         letter, confidence = predict_cell(cell)
         result_letters.append(letter)
         result_confidences.append(confidence)
-        cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        cv2.putText(annotated, letter.upper(), (x1, y1 - 5),
+
+        # Draw box
+        cv2.rectangle(annotated, (x_start, 0), (x_end, image_array.shape[0]), (0, 255, 0), 2)
+        cv2.putText(annotated, letter.upper(), (x_start + 2, 20),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
     sentence = "".join(result_letters)
