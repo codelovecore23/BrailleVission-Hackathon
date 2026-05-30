@@ -1,6 +1,5 @@
 streamlit
-keras
-tf-keras
+onnxruntime
 opencv-python-headless
 gdown
 gtts
