@@ -91,10 +91,10 @@ def find_and_predict_all(image_array):
 
         group_xs = [dots_sorted[j][0] for j in cell_dots]
         group_ys = [dots_sorted[j][1] for j in cell_dots]
-        x1 = max(0, min(group_xs) - 10)
-        y1 = max(0, min(group_ys) - 10)
-        x2 = min(image_array.shape[1], max(group_xs) + 10)
-        y2 = min(image_array.shape[0], max(group_ys) + 10)
+x1 = max(0, min(group_xs) - 25)
+y1 = max(0, min(group_ys) - 25)
+x2 = min(image_array.shape[1], max(group_xs) + 25)
+y2 = min(image_array.shape[0], max(group_ys) + 25)
         cells.append((x1, y1, x2, y2))
 
     if not cells:
