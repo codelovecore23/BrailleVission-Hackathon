@@ -44,41 +44,67 @@ def find_and_predict_all(image_array):
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
     _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
-    # Find contours (each dot group = one cell)
+    # Find individual dots
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    if not contours:
-        return "", [], image_array
-
-    # Get bounding boxes and sort left to right
-    boxes = []
+    # Collect dot centers
+    dots = []
     for cnt in contours:
         x, y, w, h = cv2.boundingRect(cnt)
         area = w * h
-        # Filter very small noise and very large blobs
-        if 200 < area < 100000:
-            boxes.append((x, y, w, h))
+        if 20 < area < 500:  # only small dots
+            cx = x + w // 2
+            cy = y + h // 2
+            dots.append((cx, cy))
 
-    if not boxes:
+    if not dots:
         return "", [], image_array
 
-    # Sort left to right, top to bottom
-    boxes = sorted(boxes, key=lambda b: (b[1] // 60, b[0]))
+    # Group dots into Braille cells
+    # A Braille cell is roughly 30px wide x 40px tall
+    CELL_W = 30
+    CELL_H = 40
+
+    used = set()
+    cells = []
+
+    # Sort dots left to right, top to bottom
+    dots_sorted = sorted(dots, key=lambda d: (d[0] // CELL_W, d[1] // CELL_H))
+
+    for i, (cx, cy) in enumerate(dots_sorted):
+        if i in used:
+            continue
+        # Find all dots in same cell window
+        cell_dots = []
+        for j, (ox, oy) in enumerate(dots_sorted):
+            if j in used:
+                continue
+            if abs(ox - cx) < CELL_W and abs(oy - cy) < CELL_H * 1.5:
+                cell_dots.append(j)
+        for j in cell_dots:
+            used.add(j)
+
+        # Get bounding box of this cell group
+        group_xs = [dots_sorted[j][0] for j in cell_dots]
+        group_ys = [dots_sorted[j][1] for j in cell_dots]
+        x1 = max(0, min(group_xs) - 8)
+        y1 = max(0, min(group_ys) - 8)
+        x2 = min(image_array.shape[1], max(group_xs) + 8)
+        y2 = min(image_array.shape[0], max(group_ys) + 8)
+        cells.append((x1, y1, x2, y2))
+
+    if not cells:
+        return "", [], image_array
+
+    # Sort cells left to right
+    cells = sorted(cells, key=lambda c: c[0])
 
     result_letters = []
     result_confidences = []
     annotated = image_array.copy()
 
-    for (x, y, w, h) in boxes:
-        # Crop each cell with small padding
-        pad = 5
-        x1 = max(0, x - pad)
-        y1 = max(0, y - pad)
-        x2 = min(image_array.shape[1], x + w + pad)
-        y2 = min(image_array.shape[0], y + h + pad)
-
+    for (x1, y1, x2, y2) in cells:
         cell = image_array[y1:y2, x1:x2]
-
         if cell.size == 0:
             continue
 
@@ -86,14 +112,13 @@ def find_and_predict_all(image_array):
         result_letters.append(letter)
         result_confidences.append(confidence)
 
-        # Draw box on image
+        # Draw green box and letter
         cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
         cv2.putText(annotated, letter.upper(), (x1, y1 - 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
     sentence = "".join(result_letters)
     return sentence, result_confidences, annotated
-
 # ── Text to speech ────────────────────────────────────
 def speak(text):
     tts = gTTS(text=text, lang='en')
