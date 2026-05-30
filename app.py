@@ -30,10 +30,12 @@ def predict_cell(cell_img):
     # Convert to grayscale
     gray = cv2.cvtColor(cell_img, cv2.COLOR_RGB2GRAY)
     
-    # Make dots dark on white background (match training data style)
-    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # Invert if background is dark (dots are light)
+    if np.mean(gray) < 127:
+        gray = cv2.bitwise_not(gray)
     
-    resized = cv2.resize(binary, (32, 32))
+    # Resize to training size
+    resized = cv2.resize(gray, (32, 32))
     normalized = resized / 255.0
     ready = normalized.reshape(1, 32, 32, 1).astype(np.float32)
     
@@ -53,12 +55,11 @@ def find_and_predict_all(image_array):
     # Find individual dots
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # Collect dot centers
     dots = []
     for cnt in contours:
         x, y, w, h = cv2.boundingRect(cnt)
         area = w * h
-        if 20 < area < 500:  # only small dots
+        if 20 < area < 500:
             cx = x + w // 2
             cy = y + h // 2
             dots.append((cx, cy))
@@ -66,21 +67,19 @@ def find_and_predict_all(image_array):
     if not dots:
         return "", [], image_array
 
-    # Group dots into Braille cells
-    # A Braille cell is roughly 30px wide x 40px tall
-    CELL_W = 30
-    CELL_H = 40
+    # Auto calculate cell size from dot spacing
+    xs = sorted(set(d[0] for d in dots))
+    gaps = [xs[i+1] - xs[i] for i in range(len(xs)-1) if xs[i+1] - xs[i] > 3]
+    CELL_W = int(np.median(gaps) * 2.5) if gaps else 30
+    CELL_H = int(CELL_W * 1.5)
 
     used = set()
     cells = []
-
-    # Sort dots left to right, top to bottom
-    dots_sorted = sorted(dots, key=lambda d: (d[0] // CELL_W, d[1] // CELL_H))
+    dots_sorted = sorted(dots, key=lambda d: (d[0] // max(CELL_W,1), d[1] // max(CELL_H,1)))
 
     for i, (cx, cy) in enumerate(dots_sorted):
         if i in used:
             continue
-        # Find all dots in same cell window
         cell_dots = []
         for j, (ox, oy) in enumerate(dots_sorted):
             if j in used:
@@ -90,19 +89,17 @@ def find_and_predict_all(image_array):
         for j in cell_dots:
             used.add(j)
 
-        # Get bounding box of this cell group
         group_xs = [dots_sorted[j][0] for j in cell_dots]
         group_ys = [dots_sorted[j][1] for j in cell_dots]
-        x1 = max(0, min(group_xs) - 8)
-        y1 = max(0, min(group_ys) - 8)
-        x2 = min(image_array.shape[1], max(group_xs) + 8)
-        y2 = min(image_array.shape[0], max(group_ys) + 8)
+        x1 = max(0, min(group_xs) - 10)
+        y1 = max(0, min(group_ys) - 10)
+        x2 = min(image_array.shape[1], max(group_xs) + 10)
+        y2 = min(image_array.shape[0], max(group_ys) + 10)
         cells.append((x1, y1, x2, y2))
 
     if not cells:
         return "", [], image_array
 
-    # Sort cells left to right
     cells = sorted(cells, key=lambda c: c[0])
 
     result_letters = []
@@ -113,12 +110,9 @@ def find_and_predict_all(image_array):
         cell = image_array[y1:y2, x1:x2]
         if cell.size == 0:
             continue
-
         letter, confidence = predict_cell(cell)
         result_letters.append(letter)
         result_confidences.append(confidence)
-
-        # Draw green box and letter
         cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
         cv2.putText(annotated, letter.upper(), (x1, y1 - 5),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
