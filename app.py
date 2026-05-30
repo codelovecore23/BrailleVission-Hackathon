@@ -27,18 +27,12 @@ session, reverse_map = load_resources()
 
 # ── Predict single cell ───────────────────────────────
 def predict_cell(cell_img):
-    # Convert to grayscale
     gray = cv2.cvtColor(cell_img, cv2.COLOR_RGB2GRAY)
-    
-    # Invert if background is dark (dots are light)
     if np.mean(gray) < 127:
         gray = cv2.bitwise_not(gray)
-    
-    # Resize to training size
-    resized = cv2.resize(gray, (32, 32))
+    resized = cv2.resize(gray, (50, 50))  # ← changed 32 to 50
     normalized = resized / 255.0
-    ready = normalized.reshape(1, 32, 32, 1).astype(np.float32)
-    
+    ready = normalized.reshape(1, 50, 50, 1).astype(np.float32)  # ← changed 32 to 50
     input_name = session.get_inputs()[0].name
     prediction = session.run(None, {input_name: ready})[0]
     class_index = str(np.argmax(prediction))
